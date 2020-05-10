@@ -743,6 +743,7 @@ static void colo_incoming_process_checkpoint(MigrationIncomingState *mis,
     ret = qemu_load_device_state(fb);
     if (ret < 0) {
         error_setg(errp, "COLO: load device state failed");
+        vmstate_loading = false;
         qemu_mutex_unlock_iothread();
         return;
     }
@@ -751,6 +752,7 @@ static void colo_incoming_process_checkpoint(MigrationIncomingState *mis,
     replication_get_error_all(&local_err);
     if (local_err) {
         error_propagate(errp, local_err);
+        vmstate_loading = false;
         qemu_mutex_unlock_iothread();
         return;
     }
@@ -759,6 +761,7 @@ static void colo_incoming_process_checkpoint(MigrationIncomingState *mis,
     replication_do_checkpoint_all(&local_err);
     if (local_err) {
         error_propagate(errp, local_err);
+        vmstate_loading = false;
         qemu_mutex_unlock_iothread();
         return;
     }
@@ -770,6 +773,7 @@ static void colo_incoming_process_checkpoint(MigrationIncomingState *mis,
 
     if (local_err) {
         error_propagate(errp, local_err);
+        vmstate_loading = false;
         qemu_mutex_unlock_iothread();
         return;
     }
@@ -780,9 +784,6 @@ static void colo_incoming_process_checkpoint(MigrationIncomingState *mis,
     qemu_mutex_unlock_iothread();
 
     if (failover_get_state() == FAILOVER_STATUS_RELAUNCH) {
-        failover_set_state(FAILOVER_STATUS_RELAUNCH,
-                        FAILOVER_STATUS_NONE);
-        failover_request_active(NULL);
         return;
     }
 
@@ -881,6 +882,14 @@ void *colo_process_incoming_thread(void *opaque)
             error_report_err(local_err);
             break;
         }
+
+        if (failover_get_state() == FAILOVER_STATUS_RELAUNCH) {
+            failover_set_state(FAILOVER_STATUS_RELAUNCH,
+                            FAILOVER_STATUS_NONE);
+            failover_request_active(NULL);
+            break;
+        }
+
         if (failover_get_state() != FAILOVER_STATUS_NONE) {
             error_report("failover request");
             break;
@@ -888,8 +897,6 @@ void *colo_process_incoming_thread(void *opaque)
     }
 
 out:
-    vmstate_loading = false;
-
     /*
      * There are only two reasons we can get here, some error happened
      * or the user triggered failover.
